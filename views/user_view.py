@@ -5,41 +5,45 @@ import pandas as pd
 
 def user_view(name, conn, c):
     st.title("Submit a Ticket")
+
     if "subject" not in st.session_state:
         st.session_state["subject"] = ""
     if "description" not in st.session_state:
         st.session_state["description"] = ""
-    if "email" not in st.session_state:
-        st.session_state["email"] = ""
 
     with st.form("ticket_form"):
         subject = st.text_input("Subject", value=st.session_state["subject"])
         description = st.text_area("Description", value=st.session_state["description"])
-        email = st.text_input("Your Email", value=st.session_state["email"])
         submitted = st.form_submit_button("Submit Ticket")
 
         if submitted:
-            if not subject.strip() or not description.strip() or not email.strip():
+            if not subject.strip() or not description.strip():
                 st.error("Please fill in all fields.")
             else:
+                # Fetch email for the logged-in user
+                c.execute("SELECT email FROM users WHERE username=?", (name,))
+                email = c.fetchone()[0]
+
+                # Optional: check for duplicate open tickets
                 c.execute(
                     """
                     SELECT COUNT(*) FROM tickets 
                     WHERE name=? AND subject=? AND description=? AND status='Open'
-                """,
+                    """,
                     (name, subject.strip(), description.strip()),
                 )
                 if c.fetchone()[0] > 0:
                     st.warning("You already submitted this ticket.")
                 else:
+                    # Insert the ticket with email
                     c.execute(
                         """
                         INSERT INTO tickets (name, email, subject, description, status, created_at, updated_at, comments)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+                        """,
                         (
                             name,
-                            email.strip(),
+                            email,
                             subject.strip(),
                             description.strip(),
                             "Open",
@@ -52,8 +56,8 @@ def user_view(name, conn, c):
                     st.success("Ticket submitted successfully.")
                     st.session_state["subject"] = ""
                     st.session_state["description"] = ""
-                    st.session_state["email"] = ""
                     st.rerun()
+
 
     st.header("Your Tickets")
     user_tickets = pd.read_sql_query(
@@ -72,11 +76,12 @@ def user_view(name, conn, c):
                     latest_admin_comment = line.replace("Admin:", "").strip()
                     break
             latest_admin_replies.append(latest_admin_comment)
+
         user_tickets["Latest Admin Reply"] = latest_admin_replies
         user_tickets_display = user_tickets[
             ["id", "subject", "status", "created_at", "Latest Admin Reply"]
         ]
-        st.dataframe(user_tickets_display, width="stretch")
+        st.dataframe(user_tickets_display, use_container_width=True)
     else:
         st.info("You haven't submitted any tickets yet.")
 
@@ -104,13 +109,14 @@ def user_view(name, conn, c):
                 updated_comments = prev_comments + new_comment
                 c.execute(
                     """
-                    UPDATE tickets SET status='Reopened', comments=?, updated_at=? WHERE id=?
-                """,
+                    UPDATE tickets 
+                    SET status='Reopened', comments=?, updated_at=? 
+                    WHERE id=?
+                    """,
                     (updated_comments, datetime.datetime.now(), reopen_id),
                 )
                 conn.commit()
                 st.success("Ticket reopened successfully.")
                 st.session_state["subject"] = ""
                 st.session_state["description"] = ""
-                st.session_state["email"] = ""
                 st.rerun()
