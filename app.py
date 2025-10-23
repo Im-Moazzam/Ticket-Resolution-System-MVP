@@ -5,7 +5,7 @@ import datetime
 import pandas as pd
 
 # --- DATABASE SETUP ---
-conn = sqlite3.connect("tickets.db")
+conn = sqlite3.connect("tickets.db", check_same_thread=False)
 c = conn.cursor()
 c.execute('''CREATE TABLE IF NOT EXISTS tickets
              (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,6 +66,7 @@ if st.session_state.get("authentication_status"):
                     ))
                     conn.commit()
                     st.success("Your ticket has been submitted.")
+                    st.rerun()
 
         st.header("Your Tickets")
         user_tickets = pd.read_sql_query(
@@ -81,35 +82,102 @@ if st.session_state.get("authentication_status"):
     elif user_role == "admin":
         st.title("Admin Dashboard")
 
-        # Stats
+        # --- Stats Section ---
         open_count = c.execute("SELECT COUNT(*) FROM tickets WHERE status='Open'").fetchone()[0]
-        resolved_count = c.execute("SELECT COUNT(*) FROM tickets WHERE status='Resolved'").fetchone()[0]
-        st.subheader("Ticket Stats")
-        st.write(f"Open Tickets: {open_count} | Resolved Tickets: {resolved_count}")
+        resolved_count = c.execute("SELECT COUNT(*) FROM tickets WHERE status IN ('Resolved', 'Discarded')").fetchone()[0]
 
-        tickets = c.execute("SELECT * FROM tickets ORDER BY id DESC").fetchall()
-        if not tickets:
-            st.info("No tickets yet.")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(
+                f"""
+                <div style='background-color:#f8d7da;padding:15px;border-radius:10px;text-align:center;'>
+                    <h2 style='color:#721c24;margin:0;'>Open Tickets</h2>
+                    <h1 style='font-size:50px;margin:0;color:#000000;'>{open_count}</h1>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+        with col2:
+            st.markdown(
+                f"""
+                <div style='background-color:#d4edda;padding:15px;border-radius:10px;text-align:center;'>
+                    <h2 style='color:#155724;margin:0;'>Closed Tickets</h2>
+                    <h1 style='font-size:50px;margin:0;color:#000000;'>{resolved_count}</h1>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+        st.markdown("---")
+
+        # --- Fetch Tickets ---
+        open_tickets = c.execute("SELECT * FROM tickets WHERE status='Open' ORDER BY id DESC").fetchall()
+        closed_tickets = c.execute("SELECT * FROM tickets WHERE status IN ('Resolved', 'Discarded') ORDER BY id DESC").fetchall()
+
+        # --- ACTIVE TICKETS ---
+        st.subheader("Active Tickets")
+        if not open_tickets:
+            st.info("No active tickets.")
         else:
-            for t in tickets:
+            for t in open_tickets:
                 ticket_id, uname, email, subject, desc, status, created, updated = t
 
-                header = f"{uname} : {subject} ({status})"
-                with st.expander(header):
-                    st.write(f"**Description:** {desc}")
-                    st.write(f"**Email:** {email}")
-                    st.write(f"**Submitted At:** {created}")
-                    col1, col2 = st.columns(2)
-                    if status == "Open":
-                        if col1.button(f"Resolved ✅ - {ticket_id}", key=f"res_{ticket_id}"):
-                            c.execute("UPDATE tickets SET status=?, updated_at=? WHERE id=?",
-                                      ("Resolved", datetime.datetime.now(), ticket_id))
-                            conn.commit()
-                            st.experimental_rerun()
-                        if col2.button(f"Discard ❌ - {ticket_id}", key=f"discard_{ticket_id}"):
-                            c.execute("DELETE FROM tickets WHERE id=?", (ticket_id,))
-                            conn.commit()
-                            st.experimental_rerun()
+                # Header + Buttons aligned properly
+                col1, col2, col3 = st.columns([6, 0.6, 0.6])
+                with col1:
+                    exp = st.expander(f"**{uname}** : {subject} ({status})")
+                    with exp:
+                        st.write(f"**Description:** {desc}")
+                        st.write(f"**Email:** {email}")
+                        st.write(f"**Submitted:** {created}")
+                        st.write(f"**Last Updated:** {updated}")
+
+                btn_style = """
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    height: 35px;
+                    width: 35px;
+                    font-size: 20px;
+                """
+
+                with col2:
+                    st.markdown(f"<div style='{btn_style}'>✅</div>", unsafe_allow_html=True)
+                    if st.button("Resolve", key=f"res_{ticket_id}"):
+                        c.execute("UPDATE tickets SET status=?, updated_at=? WHERE id=?",
+                                  ("Resolved", datetime.datetime.now(), ticket_id))
+                        conn.commit()
+                        st.rerun()
+
+                with col3:
+                    st.markdown(f"<div style='{btn_style}'>🗑️</div>", unsafe_allow_html=True)
+                    if st.button("Discard", key=f"dis_{ticket_id}"):
+                        c.execute("UPDATE tickets SET status=?, updated_at=? WHERE id=?",
+                                  ("Discarded", datetime.datetime.now(), ticket_id))
+                        conn.commit()
+                        st.rerun()
+
+        # --- CLOSED TICKETS ---
+        st.subheader("Closed Tickets")
+        if not closed_tickets:
+            st.info("No closed tickets yet.")
+        else:
+            for t in closed_tickets:
+                ticket_id, uname, email, subject, desc, status, created, updated = t
+                bg_color = "#d4edda" if status == "Resolved" else "#f8d7da"
+                text_color = "#155724" if status == "Resolved" else "#721c24"
+                with st.expander(f"{uname} : {subject} ({status})"):
+                    st.markdown(
+                        f"""
+                        <div style='background-color:{bg_color};padding:10px;border-radius:10px;margin-bottom:8px;color:{text_color};'>
+                            <p><strong>Description:</strong> {desc}</p>
+                            <p><strong>Email:</strong> {email}</p>
+                            <p><strong>Submitted:</strong> {created}</p>
+                            <p><strong>Last Updated:</strong> {updated}</p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
 
 elif st.session_state.get("authentication_status") is False:
     st.error("Username/password is incorrect.")
