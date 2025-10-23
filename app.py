@@ -26,20 +26,14 @@ authenticator = stauth.Authenticate(
 
 st.set_page_config(page_title="Ticket System", layout="centered")
 
-# --- FIX: ensure streamlit_authenticator has required session keys ---
-if "logout" not in st.session_state:
-    st.session_state["logout"] = None
-if "name" not in st.session_state:
-    st.session_state["name"] = None
-if "authentication_status" not in st.session_state:
-    st.session_state["authentication_status"] = None
-if "username" not in st.session_state:
-    st.session_state["username"] = None
+# --- SESSION KEYS SAFETY CHECK ---
+for key in ["logout", "name", "authentication_status", "username"]:
+    if key not in st.session_state:
+        st.session_state[key] = None
 
 # --- DATABASE CONNECTION ---
 conn, c = get_connection()
 
-# --- LOGIN / SIGNUP SWITCH ---
 # --- LOGIN / SIGNUP ---
 if st.session_state.get("authentication_status") is None:
     auth_mode = st.radio("Select Mode", ["Login", "Signup"], horizontal=True)
@@ -71,16 +65,43 @@ if st.session_state.get("authentication_status") is None:
                     st.session_state["username"] = None
                     st.rerun()
 
-# --- MAIN APP LOGIC ---
-if st.session_state.get("authentication_status"):
+# --- MAIN APP SECTION ---
+elif st.session_state.get("authentication_status"):
     name = st.session_state.get("name")
     username = st.session_state.get("username")
     user_role = credentials["usernames"][username]["role"]
 
-    st.sidebar.title("Ticket System")
-    authenticator.logout("Logout", "sidebar")
-    st.sidebar.write(f"Logged in as: **{username} ({user_role})**")
+    # --- HEADER BAR ---
+    st.markdown(
+        """
+        <div style="
+            background-color:#f8f9fa;
+            padding:20px 40px;
+            border-radius:12px;
+            box-shadow:0 2px 6px rgba(0,0,0,0.1);
+            margin-bottom:25px;
+        ">
+            <h2 style="margin:0; text-align:center; color:#333;">
+                Welcome to Ticket Portal
+            </h2>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
+    # --- BELOW HEADER: USER INFO + LOGOUT ---
+    left, right = st.columns([7, 1])
+    with left:
+        st.markdown(
+            f"<p style='font-size:16px; color:#555; font-weight:500;'>"
+            f"Logged in as: <b>{username}</b>"
+            f"</p>",
+            unsafe_allow_html=True,
+        )
+    with right:
+        authenticator.logout("Logout", "main")
+
+    # --- USER / ADMIN VIEW SWITCH ---
     if user_role == "user":
         from views.user_view import user_view
 
@@ -90,7 +111,10 @@ if st.session_state.get("authentication_status"):
 
         admin_view(conn, c)
 
+# --- INVALID LOGIN ---
 elif st.session_state.get("authentication_status") is False:
     st.error("Username/password is incorrect.")
+
+# --- NO LOGIN YET ---
 else:
     st.warning("Please log in to continue.")
