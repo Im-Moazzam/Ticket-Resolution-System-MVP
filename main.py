@@ -1,5 +1,5 @@
 def main():
-    print("Hello from tickets-app!")
+    print("Hello from tickets")
 
 
 if __name__ == "__main__":
