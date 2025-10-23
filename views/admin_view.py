@@ -117,7 +117,7 @@ def admin_view(conn, c):
                             )
 
                 new_comment = st.text_input(
-                    f"Reply to user", key=f"comment_{ticket_id}"
+                    "Reply to user", key=f"comment_{ticket_id}"
                 )
                 if st.button("💬 Send Reply", key=f"reply_{ticket_id}"):
                     if new_comment.strip():
