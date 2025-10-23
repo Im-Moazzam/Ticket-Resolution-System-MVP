@@ -57,16 +57,28 @@ if st.session_state.get("authentication_status"):
                 if not subject.strip() or not description.strip() or not email.strip():
                     st.error("Please fill in all fields.")
                 else:
+                    # Check for duplicate ticket
                     c.execute("""
-                        INSERT INTO tickets (name, email, subject, description, status, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        name, email, subject, description, "Open",
-                        datetime.datetime.now(), datetime.datetime.now()
-                    ))
-                    conn.commit()
-                    st.success("Your ticket has been submitted.")
-                    st.rerun()
+                        SELECT COUNT(*) FROM tickets 
+                        WHERE name=? AND subject=? AND description=? AND status='Open'
+                    """, (name, subject.strip(), description.strip()))
+                    duplicate_count = c.fetchone()[0]
+
+                    if duplicate_count > 0:
+                        st.warning("You have already submitted a ticket with the same subject and description.")
+                    else:
+                        # Insert new ticket
+                        c.execute("""
+                            INSERT INTO tickets (name, email, subject, description, status, created_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            name, email, subject.strip(), description.strip(), "Open",
+                            datetime.datetime.now(), datetime.datetime.now()
+                        ))
+                        conn.commit()
+                        st.success("Your ticket has been submitted.")
+                        st.rerun()
+
 
         st.header("Your Tickets")
         user_tickets = pd.read_sql_query(
