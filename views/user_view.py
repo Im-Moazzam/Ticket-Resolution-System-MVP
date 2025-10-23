@@ -22,9 +22,10 @@ def user_view(name, conn, c):
             else:
                 # Fetch email for the logged-in user
                 c.execute("SELECT email FROM users WHERE username=?", (name,))
-                email = c.fetchone()[0]
+                email_row = c.fetchone()
+                email = email_row[0] if email_row else ""
 
-                # Optional: check for duplicate open tickets
+                # Check for duplicate open tickets
                 c.execute(
                     """
                     SELECT COUNT(*) FROM tickets 
@@ -57,7 +58,6 @@ def user_view(name, conn, c):
                     st.session_state["subject"] = ""
                     st.session_state["description"] = ""
                     st.rerun()
-
 
     st.header("Your Tickets")
     user_tickets = pd.read_sql_query(
