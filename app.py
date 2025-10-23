@@ -11,15 +11,9 @@ c.execute('''CREATE TABLE IF NOT EXISTS tickets
              (id INTEGER PRIMARY KEY AUTOINCREMENT,
               name TEXT, email TEXT, subject TEXT,
               description TEXT, status TEXT,
-              created_at TEXT, updated_at TEXT)''')
+              created_at TEXT, updated_at TEXT,
+              comments TEXT)''')
 conn.commit()
-
-# --- ADD reopen_comment COLUMN IF NOT EXISTS ---
-try:
-    c.execute("ALTER TABLE tickets ADD COLUMN reopen_comment TEXT")
-    conn.commit()
-except sqlite3.OperationalError:
-    pass  # column already exists
 
 # --- USER CREDENTIALS ---
 credentials = {
@@ -51,7 +45,7 @@ if st.session_state.get("authentication_status"):
     authenticator.logout("Logout", "sidebar")
     st.sidebar.write(f"Logged in as: **{name} ({user_role})**")
 
-    # --- USER VIEW ---
+    # ==================== USER VIEW ====================
     if user_role == "user":
         st.title("Submit a Ticket")
         with st.form("ticket_form"):
@@ -64,146 +58,182 @@ if st.session_state.get("authentication_status"):
                 if not subject.strip() or not description.strip() or not email.strip():
                     st.error("Please fill in all fields.")
                 else:
-                    # Check for duplicate ticket
                     c.execute("""
                         SELECT COUNT(*) FROM tickets 
                         WHERE name=? AND subject=? AND description=? AND status='Open'
                     """, (name, subject.strip(), description.strip()))
-                    duplicate_count = c.fetchone()[0]
-
-                    if duplicate_count > 0:
-                        st.warning("You have already submitted a ticket with the same subject and description.")
+                    if c.fetchone()[0] > 0:
+                        st.warning("You already submitted this ticket.")
                     else:
-                        # Insert new ticket
                         c.execute("""
-                            INSERT INTO tickets (name, email, subject, description, status, created_at, updated_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            INSERT INTO tickets (name, email, subject, description, status, created_at, updated_at, comments)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """, (
                             name, email, subject.strip(), description.strip(), "Open",
-                            datetime.datetime.now(), datetime.datetime.now()
+                            datetime.datetime.now(), datetime.datetime.now(), ""
                         ))
                         conn.commit()
-                        st.success("Your ticket has been submitted.")
+                        st.success("Ticket submitted successfully.")
                         st.rerun()
 
         st.header("Your Tickets")
         user_tickets = pd.read_sql_query(
-            "SELECT id, subject, status, created_at, reopen_comment FROM tickets WHERE name=? ORDER BY id DESC",
+            "SELECT id, subject, status, created_at, comments FROM tickets WHERE name=? ORDER BY id DESC",
             conn, params=(name,)
         )
 
         if not user_tickets.empty:
             for _, row in user_tickets.iterrows():
-                st.markdown(f"### {row['subject']} ({row['status']})")
-                st.write(f"Created: {row['created_at']}")
-
-                if row["status"] == "Reopened" and row["reopen_comment"]:
-                    st.info(f"**Your comment:** {row['reopen_comment']}")
-
-                if row["status"] in ["Resolved", "Discarded"]:
-                    with st.expander("Reopen Ticket"):
-                        comment = st.text_area(f"Comment (for ticket #{row['id']})", key=f"comment_{row['id']}")
-                        if st.button(f"Reopen #{row['id']}", key=f"reopen_{row['id']}"):
-                            if not comment.strip():
-                                st.warning("Please add a comment before reopening.")
-                            else:
-                                c.execute("""
-                                    UPDATE tickets 
-                                    SET status='Reopened', reopen_comment=?, updated_at=?
-                                    WHERE id=?
-                                """, (comment.strip(), datetime.datetime.now(), row["id"]))
-                                conn.commit()
-                                st.success("Ticket reopened successfully.")
-                                st.rerun()
-                st.markdown("---")
+                exp = st.expander(f"#{row['id']} — {row['subject']} ({row['status']})", expanded=False)
+                with exp:
+                    comments = (row['comments'] or "").strip().splitlines()
+                    latest_admin_comment = ""
+                    for line in reversed(comments):
+                        if "Admin:" in line:
+                            latest_admin_comment = line
+                            break
+                    if latest_admin_comment:
+                        st.write("**Latest Admin Reply:**")
+                        st.code(latest_admin_comment, language="text")
+                    else:
+                        st.write("No admin reply yet.")
         else:
             st.info("You haven't submitted any tickets yet.")
 
-    # --- ADMIN VIEW ---
+        st.markdown("---")
+        st.subheader("Reopen a Ticket")
+
+        with st.form("reopen_form"):
+            reopen_id = st.number_input("Enter Ticket ID to Reopen", min_value=1, step=1)
+            comment = st.text_area("Enter your comment or explanation")
+            reopen_submit = st.form_submit_button("Reopen Ticket")
+
+            if reopen_submit:
+                ticket = c.execute("SELECT id, comments, status FROM tickets WHERE id=? AND name=?", (reopen_id, name)).fetchone()
+                if not ticket:
+                    st.error("Ticket not found or not owned by you.")
+                elif ticket[2] in ("Open", "Reopened"):
+                    st.warning("This ticket is already active.")
+                else:
+                    prev_comments = ticket[1] or ""
+                    timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+                    new_comment = f"[{timestamp}] {name}: {comment.strip()}\n"
+                    updated_comments = prev_comments + new_comment
+                    c.execute("""
+                        UPDATE tickets SET status='Reopened', comments=?, updated_at=?
+                        WHERE id=?
+                    """, (updated_comments, datetime.datetime.now(), reopen_id))
+                    conn.commit()
+                    st.success("Ticket reopened successfully.")
+                    st.rerun()
+
+    # ==================== ADMIN VIEW ====================
     elif user_role == "admin":
         st.title("Admin Dashboard")
 
-        # --- Stats Section ---
+        # Stats
         open_count = c.execute("SELECT COUNT(*) FROM tickets WHERE status='Open'").fetchone()[0]
         reopened_count = c.execute("SELECT COUNT(*) FROM tickets WHERE status='Reopened'").fetchone()[0]
         closed_count = c.execute("SELECT COUNT(*) FROM tickets WHERE status IN ('Resolved', 'Discarded')").fetchone()[0]
 
         col1, col2, col3 = st.columns(3)
         col1.markdown(
-            f"<div style='background-color:#f8d7da;padding:15px;border-radius:10px;text-align:center;'>"
-            f"<h2 style='color:#721c24;margin:0;'>Open</h2>"
-            f"<h1 style='font-size:50px;margin:0;color:#000000;'>{open_count}</h1></div>",
+            f"<div style='background-color:#d1ecf1;padding:20px;border-radius:15px;text-align:center;'>"
+            f"<h2 style='color:#0c5460;margin:0;'>Open</h2>"
+            f"<h1 style='font-size:60px;margin:0;color:#000;'>{open_count}</h1></div>",
             unsafe_allow_html=True
         )
         col2.markdown(
-            f"<div style='background-color:#fff3cd;padding:15px;border-radius:10px;text-align:center;'>"
+            f"<div style='background-color:#fff3cd;padding:20px;border-radius:15px;text-align:center;'>"
             f"<h2 style='color:#856404;margin:0;'>Reopened</h2>"
-            f"<h1 style='font-size:50px;margin:0;color:#000000;'>{reopened_count}</h1></div>",
+            f"<h1 style='font-size:60px;margin:0;color:#000;'>{reopened_count}</h1></div>",
             unsafe_allow_html=True
         )
         col3.markdown(
-            f"<div style='background-color:#d4edda;padding:15px;border-radius:10px;text-align:center;'>"
+            f"<div style='background-color:#d4edda;padding:20px;border-radius:15px;text-align:center;'>"
             f"<h2 style='color:#155724;margin:0;'>Closed</h2>"
-            f"<h1 style='font-size:50px;margin:0;color:#000000;'>{closed_count}</h1></div>",
+            f"<h1 style='font-size:60px;margin:0;color:#000;'>{closed_count}</h1></div>",
             unsafe_allow_html=True
         )
 
         st.markdown("---")
 
-        # --- Fetch Tickets ---
-        tickets = c.execute("SELECT * FROM tickets ORDER BY id DESC").fetchall()
+        def render_ticket_section(title, query, bg, color, show_actions=True):
+            df = pd.read_sql_query(query, conn)
+            st.subheader(title)
+            if df.empty:
+                st.info("No tickets here.")
+                return
 
-        st.subheader("All Tickets")
-        if not tickets:
-            st.info("No tickets found.")
-        else:
-            for t in tickets:
-                ticket_id, uname, email, subject, desc, status, created, updated, *rest = t
-                reopen_comment = rest[0] if rest else None
+            for _, row in df.iterrows():
+                ticket_id = row["id"]
+                uname = row["name"]
+                email = row["email"]
+                subject = row["subject"]
+                desc = row["description"]
+                status = row["status"]
+                created = row["created_at"]
+                updated = row["updated_at"]
+                comments = row.get("comments", "")
 
-                # Colors based on status
-                if status == "Open":
-                    bg, color = "#f8d7da", "#721c24"
-                elif status == "Resolved":
-                    bg, color = "#d4edda", "#155724"
-                elif status == "Discarded":
-                    bg, color = "#f5c6cb", "#721c24"
-                elif status == "Reopened":
-                    bg, color = "#fff3cd", "#856404"
-                else:
-                    bg, color = "#ffffff", "#000000"
-
-                col1, col2, col3 = st.columns([6, 0.5, 0.5])
-                with col1:
-                    exp = st.expander(f"{uname} : {subject} ({status})")
-                    with exp:
-                        st.markdown(
-                            f"""
-                            <div style='background-color:{bg};padding:10px;border-radius:10px;margin-bottom:8px;color:{color};'>
-                                <p><strong>Description:</strong> {desc}</p>
-                                <p><strong>Email:</strong> {email}</p>
-                                <p><strong>Submitted:</strong> {created}</p>
-                                <p><strong>Last Updated:</strong> {updated}</p>
-                            </div>
-                            """,
-                            unsafe_allow_html=True
-                        )
-                        if reopen_comment:
-                            st.warning(f"**Reopen Comment:** {reopen_comment}")
-
-                with col2:
-                    if st.button("✅", key=f"res_{ticket_id}"):
-                        c.execute("UPDATE tickets SET status=?, updated_at=? WHERE id=?",
-                                  ("Resolved", datetime.datetime.now(), ticket_id))
+                header_col1, header_col2, header_col3 = st.columns([0.7, 0.15, 0.15])
+                with header_col1:
+                    exp = st.expander(f"{uname} : {subject} ({status})", expanded=False)
+                with header_col2:
+                    if show_actions and st.button("✅ Resolve", key=f"res_{ticket_id}"):
+                        c.execute("UPDATE tickets SET status='Resolved', updated_at=? WHERE id=?",
+                                  (datetime.datetime.now(), ticket_id))
+                        conn.commit()
+                        st.rerun()
+                with header_col3:
+                    if show_actions and st.button("🗑️ Discard", key=f"dis_{ticket_id}"):
+                        c.execute("UPDATE tickets SET status='Discarded', updated_at=? WHERE id=?",
+                                  (datetime.datetime.now(), ticket_id))
                         conn.commit()
                         st.rerun()
 
-                with col3:
-                    if st.button("🗑️", key=f"dis_{ticket_id}"):
-                        c.execute("UPDATE tickets SET status=?, updated_at=? WHERE id=?",
-                                  ("Discarded", datetime.datetime.now(), ticket_id))
-                        conn.commit()
-                        st.rerun()
+                with exp:
+                    st.markdown(
+                        f"""
+                        <div style='background-color:{bg};padding:10px;border-radius:10px;margin-bottom:8px;color:{color};'>
+                            <p><strong>Description:</strong> {desc}</p>
+                            <p><strong>Email:</strong> {email}</p>
+                            <p><strong>Submitted:</strong> {created}</p>
+                            <p><strong>Last Updated:</strong> {updated}</p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+                    if comments:
+                        st.markdown("**Conversation Log:**")
+                        for line in comments.strip().splitlines():
+                            if "Admin:" in line:
+                                st.markdown(f"<div style='color:green;'><b>{line}</b></div>", unsafe_allow_html=True)
+                            else:
+                                st.markdown(f"<div style='color:black;'>{line}</div>", unsafe_allow_html=True)
+
+                    if show_actions:
+                        new_comment = st.text_area(f"Add Comment (#{ticket_id})", key=f"comment_{ticket_id}")
+                        if st.button(f"Reply to #{ticket_id}", key=f"reply_{ticket_id}"):
+                            if new_comment.strip():
+                                timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+                                appended = (comments or "") + f"[{timestamp}] Admin: {new_comment.strip()}\n"
+                                c.execute("""
+                                    UPDATE tickets SET comments=?, updated_at=? WHERE id=?
+                                """, (appended, datetime.datetime.now(), ticket_id))
+                                conn.commit()
+                                st.rerun()
+
+        render_ticket_section("Open Tickets",
+                              "SELECT * FROM tickets WHERE status='Open' ORDER BY id DESC",
+                              "#d1ecf1", "#0c5460", True)
+        render_ticket_section("Reopened Tickets",
+                              "SELECT * FROM tickets WHERE status='Reopened' ORDER BY id DESC",
+                              "#fff3cd", "#856404", True)
+        render_ticket_section("Resolved / Discarded Tickets",
+                              "SELECT * FROM tickets WHERE status IN ('Resolved','Discarded') ORDER BY id DESC",
+                              "#d4edda", "#155724", False)
 
 elif st.session_state.get("authentication_status") is False:
     st.error("Username/password is incorrect.")
