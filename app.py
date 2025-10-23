@@ -2,6 +2,7 @@ import streamlit as st
 import streamlit_authenticator as stauth
 import sqlite3
 import datetime
+import pandas as pd
 
 # --- DATABASE SETUP ---
 conn = sqlite3.connect("tickets.db")
@@ -16,21 +17,9 @@ conn.commit()
 # --- USER CREDENTIALS ---
 credentials = {
     "usernames": {
-        "admin": {
-            "name": "Admin",
-            "password": "1234",  # plain for now
-            "role": "admin",
-        },
-        "user1": {
-            "name": "User1",
-            "password": "abcd",
-            "role": "user",
-        },
-        "user2": {
-            "name": "User2",
-            "password": "xyz",
-            "role": "user",
-        },
+        "admin": {"name": "Admin", "password": "1234", "role": "admin"},
+        "user1": {"name": "User1", "password": "abcd", "role": "user"},
+        "user2": {"name": "User2", "password": "xyz", "role": "user"},
     }
 }
 
@@ -79,38 +68,48 @@ if st.session_state.get("authentication_status"):
                     st.success("Your ticket has been submitted.")
 
         st.header("Your Tickets")
-        user_tickets = c.execute(
-            "SELECT id, subject, status, created_at FROM tickets WHERE name=? ORDER BY id DESC", (name,)
-        ).fetchall()
-
-        if user_tickets:
-            for t in user_tickets:
-                st.write(f"**ID:** {t[0]} | **Subject:** {t[1]} | **Status:** {t[2]} | **Created:** {t[3]}")
+        user_tickets = pd.read_sql_query(
+            "SELECT id, subject, status, created_at FROM tickets WHERE name=? ORDER BY id DESC",
+            conn, params=(name,)
+        )
+        if not user_tickets.empty:
+            st.dataframe(user_tickets, use_container_width=True)
         else:
             st.info("You haven't submitted any tickets yet.")
 
     # --- ADMIN VIEW ---
     elif user_role == "admin":
         st.title("Admin Dashboard")
+
+        # Stats
+        open_count = c.execute("SELECT COUNT(*) FROM tickets WHERE status='Open'").fetchone()[0]
+        resolved_count = c.execute("SELECT COUNT(*) FROM tickets WHERE status='Resolved'").fetchone()[0]
+        st.subheader("Ticket Stats")
+        st.write(f"Open Tickets: {open_count} | Resolved Tickets: {resolved_count}")
+
         tickets = c.execute("SELECT * FROM tickets ORDER BY id DESC").fetchall()
         if not tickets:
             st.info("No tickets yet.")
         else:
             for t in tickets:
-                st.write("---")
-                st.write(f"**ID:** {t[0]} | **Name:** {t[1]} | **Email:** {t[2]}")
-                st.write(f"**Subject:** {t[3]}")
-                st.write(f"**Description:** {t[4]}")
-                st.write(f"**Status:** {t[5]}")
-                if t[5] == "Open":
-                    if st.button(f"Mark as Resolved (Ticket {t[0]})"):
-                        c.execute(
-                            "UPDATE tickets SET status=?, updated_at=? WHERE id=?",
-                            ("Resolved", datetime.datetime.now(), t[0])
-                        )
-                        conn.commit()
-                        st.success(f"Ticket {t[0]} marked as resolved.")
-                        st.rerun()
+                ticket_id, uname, email, subject, desc, status, created, updated = t
+
+                header = f"{uname} : {subject} ({status})"
+                with st.expander(header):
+                    st.write(f"**Description:** {desc}")
+                    st.write(f"**Email:** {email}")
+                    st.write(f"**Submitted At:** {created}")
+                    col1, col2 = st.columns(2)
+                    if status == "Open":
+                        if col1.button(f"Resolved ✅ - {ticket_id}", key=f"res_{ticket_id}"):
+                            c.execute("UPDATE tickets SET status=?, updated_at=? WHERE id=?",
+                                      ("Resolved", datetime.datetime.now(), ticket_id))
+                            conn.commit()
+                            st.experimental_rerun()
+                        if col2.button(f"Discard ❌ - {ticket_id}", key=f"discard_{ticket_id}"):
+                            c.execute("DELETE FROM tickets WHERE id=?", (ticket_id,))
+                            conn.commit()
+                            st.experimental_rerun()
 
 elif st.session_state.get("authentication_status") is False:
     st.error("Username/password is incorrect.")
