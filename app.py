@@ -77,26 +77,25 @@ if st.session_state.get("authentication_status"):
                         st.rerun()
 
         st.header("Your Tickets")
+
         user_tickets = pd.read_sql_query(
             "SELECT id, subject, status, created_at, comments FROM tickets WHERE name=? ORDER BY id DESC",
             conn, params=(name,)
         )
 
         if not user_tickets.empty:
+            latest_admin_replies = []
             for _, row in user_tickets.iterrows():
-                exp = st.expander(f"#{row['id']} — {row['subject']} ({row['status']})", expanded=False)
-                with exp:
-                    comments = (row['comments'] or "").strip().splitlines()
-                    latest_admin_comment = ""
-                    for line in reversed(comments):
-                        if "Admin:" in line:
-                            latest_admin_comment = line
-                            break
-                    if latest_admin_comment:
-                        st.write("**Latest Admin Reply:**")
-                        st.code(latest_admin_comment, language="text")
-                    else:
-                        st.write("No admin reply yet.")
+                comments = (row["comments"] or "").strip().splitlines()
+                latest_admin_comment = "-"
+                for line in reversed(comments):
+                    if "Admin:" in line:
+                        latest_admin_comment = line.replace("Admin:", "").strip()
+                        break
+                latest_admin_replies.append(latest_admin_comment)
+            user_tickets["Latest Admin Reply"] = latest_admin_replies
+            user_tickets_display = user_tickets[["id", "subject", "status", "created_at", "Latest Admin Reply"]]
+            st.dataframe(user_tickets_display, use_container_width=True)
         else:
             st.info("You haven't submitted any tickets yet.")
 
