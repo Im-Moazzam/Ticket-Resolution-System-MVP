@@ -84,7 +84,7 @@ if st.session_state.get("authentication_status"):
 
         # --- Stats Section ---
         open_count = c.execute("SELECT COUNT(*) FROM tickets WHERE status='Open'").fetchone()[0]
-        resolved_count = c.execute("SELECT COUNT(*) FROM tickets WHERE status IN ('Resolved', 'Discarded')").fetchone()[0]
+        closed_count = c.execute("SELECT COUNT(*) FROM tickets WHERE status IN ('Resolved', 'Discarded')").fetchone()[0]
 
         col1, col2 = st.columns(2)
         with col1:
@@ -102,7 +102,7 @@ if st.session_state.get("authentication_status"):
                 f"""
                 <div style='background-color:#d4edda;padding:15px;border-radius:10px;text-align:center;'>
                     <h2 style='color:#155724;margin:0;'>Closed Tickets</h2>
-                    <h1 style='font-size:50px;margin:0;color:#000000;'>{resolved_count}</h1>
+                    <h1 style='font-size:50px;margin:0;color:#000000;'>{closed_count}</h1>
                 </div>
                 """,
                 unsafe_allow_html=True
@@ -122,8 +122,7 @@ if st.session_state.get("authentication_status"):
             for t in open_tickets:
                 ticket_id, uname, email, subject, desc, status, created, updated = t
 
-                # Header + Buttons aligned properly
-                col1, col2, col3 = st.columns([6, 0.6, 0.6])
+                col1, col2, col3 = st.columns([6, 0.5, 0.5])
                 with col1:
                     exp = st.expander(f"**{uname}** : {subject} ({status})")
                     with exp:
@@ -132,26 +131,16 @@ if st.session_state.get("authentication_status"):
                         st.write(f"**Submitted:** {created}")
                         st.write(f"**Last Updated:** {updated}")
 
-                btn_style = """
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    height: 35px;
-                    width: 35px;
-                    font-size: 20px;
-                """
-
+                # --- Buttons with emojis only, centered ---
                 with col2:
-                    st.markdown(f"<div style='{btn_style}'>✅</div>", unsafe_allow_html=True)
-                    if st.button("Resolve", key=f"res_{ticket_id}"):
+                    if st.button("✅", key=f"res_{ticket_id}"):
                         c.execute("UPDATE tickets SET status=?, updated_at=? WHERE id=?",
                                   ("Resolved", datetime.datetime.now(), ticket_id))
                         conn.commit()
                         st.rerun()
 
                 with col3:
-                    st.markdown(f"<div style='{btn_style}'>🗑️</div>", unsafe_allow_html=True)
-                    if st.button("Discard", key=f"dis_{ticket_id}"):
+                    if st.button("🗑️", key=f"dis_{ticket_id}"):
                         c.execute("UPDATE tickets SET status=?, updated_at=? WHERE id=?",
                                   ("Discarded", datetime.datetime.now(), ticket_id))
                         conn.commit()
