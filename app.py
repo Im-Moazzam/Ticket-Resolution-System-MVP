@@ -48,10 +48,17 @@ if st.session_state.get("authentication_status"):
     # ==================== USER VIEW ====================
     if user_role == "user":
         st.title("Submit a Ticket")
+        if "subject" not in st.session_state:
+            st.session_state["subject"] = ""
+        if "description" not in st.session_state:
+            st.session_state["description"] = ""
+        if "email" not in st.session_state:
+            st.session_state["email"] = ""
+
         with st.form("ticket_form"):
-            subject = st.text_input("Subject")
-            description = st.text_area("Description")
-            email = st.text_input("Your Email")
+            subject = st.text_input("Subject", value=st.session_state["subject"])
+            description = st.text_area("Description", value=st.session_state["description"])
+            email = st.text_input("Your Email", value=st.session_state["email"])
             submitted = st.form_submit_button("Submit Ticket")
 
             if submitted:
@@ -69,11 +76,14 @@ if st.session_state.get("authentication_status"):
                             INSERT INTO tickets (name, email, subject, description, status, created_at, updated_at, comments)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """, (
-                            name, email, subject.strip(), description.strip(), "Open",
+                            name, email.strip(), subject.strip(), description.strip(), "Open",
                             datetime.datetime.now(), datetime.datetime.now(), ""
                         ))
                         conn.commit()
                         st.success("Ticket submitted successfully.")
+                        st.session_state["subject"] = ""
+                        st.session_state["description"] = ""
+                        st.session_state["email"] = ""
                         st.rerun()
 
         st.header("Your Tickets")
@@ -119,18 +129,21 @@ if st.session_state.get("authentication_status"):
                     new_comment = f"[{timestamp}] {name}: {comment.strip()}\n"
                     updated_comments = prev_comments + new_comment
                     c.execute("""
-                        UPDATE tickets SET status='Reopened', comments=?, updated_at=?
-                        WHERE id=?
+                        UPDATE tickets SET status='Reopened', comments=?, updated_at=? WHERE id=?
                     """, (updated_comments, datetime.datetime.now(), reopen_id))
                     conn.commit()
                     st.success("Ticket reopened successfully.")
+                    # Reset form fields
+                    st.session_state["subject"] = ""
+                    st.session_state["description"] = ""
+                    st.session_state["email"] = ""
                     st.rerun()
 
     # ==================== ADMIN VIEW ====================
     elif user_role == "admin":
         st.title("Admin Dashboard")
 
-        # Stats
+        # --- Stats ---
         open_count = c.execute("SELECT COUNT(*) FROM tickets WHERE status='Open'").fetchone()[0]
         reopened_count = c.execute("SELECT COUNT(*) FROM tickets WHERE status='Reopened'").fetchone()[0]
         closed_count = c.execute("SELECT COUNT(*) FROM tickets WHERE status IN ('Resolved', 'Discarded')").fetchone()[0]
@@ -150,13 +163,14 @@ if st.session_state.get("authentication_status"):
         )
         col3.markdown(
             f"<div style='background-color:#d4edda;padding:20px;border-radius:15px;text-align:center;'>"
-            f"<h2 style='color:#155724;margin:0;'>Closed</h2>"
+            f"<h2 style='color:#155724;margin:0;'>Resolved</h2>"
             f"<h1 style='font-size:60px;margin:0;color:#000;'>{closed_count}</h1></div>",
             unsafe_allow_html=True
         )
 
         st.markdown("---")
 
+        # --- Ticket rendering helper ---
         def render_ticket_section(title, query, bg, color, show_actions=True):
             df = pd.read_sql_query(query, conn)
             st.subheader(title)
@@ -175,22 +189,31 @@ if st.session_state.get("authentication_status"):
                 updated = row["updated_at"]
                 comments = row.get("comments", "")
 
-                header_col1, header_col2, header_col3 = st.columns([0.7, 0.15, 0.15])
-                with header_col1:
+                # --- Header line: Title + Resolve/Discard buttons ---
+                colT, colB = st.columns([6, 2])
+                with colT:
                     exp = st.expander(f"{uname} : {subject} ({status})", expanded=False)
-                with header_col2:
-                    if show_actions and st.button("✅ Resolve", key=f"res_{ticket_id}"):
-                        c.execute("UPDATE tickets SET status='Resolved', updated_at=? WHERE id=?",
-                                  (datetime.datetime.now(), ticket_id))
-                        conn.commit()
-                        st.rerun()
-                with header_col3:
-                    if show_actions and st.button("🗑️ Discard", key=f"dis_{ticket_id}"):
-                        c.execute("UPDATE tickets SET status='Discarded', updated_at=? WHERE id=?",
-                                  (datetime.datetime.now(), ticket_id))
-                        conn.commit()
-                        st.rerun()
+                with colB:
+                    if show_actions:
+                        col_res, col_dis = st.columns(2)
+                        with col_res:
+                            if st.button("✅", key=f"res_{ticket_id}"):
+                                with conn:
+                                    c.execute(
+                                        "UPDATE tickets SET status='Resolved', updated_at=? WHERE id=?",
+                                        (datetime.datetime.now(), ticket_id),
+                                    )
+                                st.rerun()
+                        with col_dis:
+                            if st.button("🗑️", key=f"dis_{ticket_id}"):
+                                with conn:
+                                    c.execute(
+                                        "UPDATE tickets SET status='Discarded', updated_at=? WHERE id=?",
+                                        (datetime.datetime.now(), ticket_id),
+                                    )
+                                st.rerun()
 
+                # --- Inside expander: ticket info, comments, and reply ---
                 with exp:
                     st.markdown(
                         f"""
@@ -201,38 +224,70 @@ if st.session_state.get("authentication_status"):
                             <p><strong>Last Updated:</strong> {updated}</p>
                         </div>
                         """,
-                        unsafe_allow_html=True
+                        unsafe_allow_html=True,
                     )
 
+                    # --- Conversation log ---
                     if comments:
                         st.markdown("**Conversation Log:**")
                         for line in comments.strip().splitlines():
                             if "Admin:" in line:
-                                st.markdown(f"<div style='color:green;'><b>{line}</b></div>", unsafe_allow_html=True)
+                                st.markdown(
+                                    f"""
+                                    <div style='background-color:#e6ffe6;padding:8px 12px;border-radius:10px;
+                                                margin:5px 0;text-align:right;color:#155724;font-weight:500;'>
+                                        {line}
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True,
+                                )
                             else:
-                                st.markdown(f"<div style='color:black;'>{line}</div>", unsafe_allow_html=True)
+                                st.markdown(
+                                    f"""
+                                    <div style='background-color:#f1f1f1;padding:8px 12px;border-radius:10px;
+                                                margin:5px 0;text-align:left;color:#000;'>
+                                        {line}
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True,
+                                )
 
-                    if show_actions:
-                        new_comment = st.text_area(f"Add Comment (#{ticket_id})", key=f"comment_{ticket_id}")
-                        if st.button(f"Reply to #{ticket_id}", key=f"reply_{ticket_id}"):
-                            if new_comment.strip():
-                                timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
-                                appended = (comments or "") + f"[{timestamp}] Admin: {new_comment.strip()}\n"
-                                c.execute("""
-                                    UPDATE tickets SET comments=?, updated_at=? WHERE id=?
-                                """, (appended, datetime.datetime.now(), ticket_id))
-                                conn.commit()
-                                st.rerun()
+                    # --- Reply (only inside expander) ---
+                    new_comment = st.text_input(f"Reply to user", key=f"comment_{ticket_id}")
+                    if st.button("💬 Send Reply", key=f"reply_{ticket_id}"):
+                        if new_comment.strip():
+                            timestamp = datetime.datetime.now().strftime('%Y-%m-%d')
+                            appended = (comments or "") + f"[{timestamp}] Admin: {new_comment.strip()}\n"
+                            with conn:
+                                c.execute(
+                                    "UPDATE tickets SET comments=?, updated_at=? WHERE id=?",
+                                    (appended, datetime.datetime.now(), ticket_id),
+                                )
+                            st.rerun()
 
-        render_ticket_section("Open Tickets",
-                              "SELECT * FROM tickets WHERE status='Open' ORDER BY id DESC",
-                              "#d1ecf1", "#0c5460", True)
-        render_ticket_section("Reopened Tickets",
-                              "SELECT * FROM tickets WHERE status='Reopened' ORDER BY id DESC",
-                              "#fff3cd", "#856404", True)
-        render_ticket_section("Resolved / Discarded Tickets",
-                              "SELECT * FROM tickets WHERE status IN ('Resolved','Discarded') ORDER BY id DESC",
-                              "#d4edda", "#155724", False)
+        # --- Render by section ---
+        render_ticket_section(
+            "Open Tickets",
+            "SELECT * FROM tickets WHERE status='Open' ORDER BY id DESC",
+            "#d1ecf1", "#0c5460", True,
+        )
+        render_ticket_section(
+            "Reopened Tickets",
+            "SELECT * FROM tickets WHERE status='Reopened' ORDER BY id DESC",
+            "#fff3cd", "#856404", True,
+        )
+        render_ticket_section(
+            "Resolved Tickets",
+            "SELECT * FROM tickets WHERE status='Resolved' ORDER BY id DESC",
+            "#d4edda", "#155724", False,
+        )
+        render_ticket_section(
+            "Discarded Tickets",
+            "SELECT * FROM tickets WHERE status='Discarded' ORDER BY id DESC",
+            "#f8d7da", "#721c24", False,
+        )
+
+
 
 elif st.session_state.get("authentication_status") is False:
     st.error("Username/password is incorrect.")
