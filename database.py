@@ -10,6 +10,7 @@ def get_connection():
         CREATE TABLE IF NOT EXISTS tickets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT,
+            email TEXT,
             subject TEXT,
             description TEXT,
             status TEXT,
