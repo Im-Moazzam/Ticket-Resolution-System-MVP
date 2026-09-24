@@ -10,3 +10,6 @@ wheels/
 .venv
 .history/
 *.db
+
+# Local credential/user-store files (unused by the app, keep out of git)
+credentials.json
